@@ -34,6 +34,7 @@ class TranscriptWidget extends StatefulWidget {
   final Map<String, TextEditingController>? segmentControllers;
   final Map<String, FocusNode>? segmentFocusNodes;
   final Function(int)? onMatchCountChanged;
+  final Function(String)? onSegmentEdit;
 
   const TranscriptWidget({
     super.key,
@@ -55,6 +56,7 @@ class TranscriptWidget extends StatefulWidget {
     this.segmentControllers,
     this.segmentFocusNodes,
     this.onMatchCountChanged,
+    this.onSegmentEdit,
   });
 
   @override
@@ -76,6 +78,8 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
   bool _isEditing(String id) => _editingSegmentId == id;
 
   void _enterEdit(String id) {
+    if (widget.segmentControllers == null || widget.segmentFocusNodes == null) return;
+    widget.onSegmentEdit?.call(id);
     setState(() {
       _editingSegmentId = id;
     });
@@ -87,6 +91,7 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
 
   void _exitEdit() {
     if (_editingSegmentId == null) return;
+    widget.segmentFocusNodes?[_editingSegmentId]?.unfocus();
     setState(() {
       _editingSegmentId = null;
     });
@@ -99,7 +104,7 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
 
   // Search result tracking
   List<GlobalKey> _segmentKeys = [];
-  List<GlobalKey> _matchKeys = [];
+  List<int> _segmentMatchOffsets = [];
   int _previousSearchResultIndex = -1;
 
   // Toggle to show/hide speaker names globally
@@ -155,7 +160,7 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
     super.initState();
     _previousSegmentCount = widget.segments.length;
     _initializeSegmentKeys();
-    _rebuildMatchKeys();
+    _calculateMatchOffsets();
 
     // Add scroll listener to detect manual scrolling
     _scrollController.addListener(_onScroll);
@@ -174,18 +179,21 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
     _segmentKeys = List.generate(widget.segments.length, (index) => GlobalKey());
   }
 
-  void _rebuildMatchKeys() {
-    _matchKeys.clear();
-    if (widget.searchQuery.isEmpty) return;
+  void _calculateMatchOffsets() {
+    if (widget.searchQuery.isEmpty) {
+      _segmentMatchOffsets = [];
+      return;
+    }
 
-    final searchQuery = widget.searchQuery.toLowerCase();
+    final lowerQuery = widget.searchQuery.toLowerCase();
+    int currentTotal = 0;
+    _segmentMatchOffsets = [];
 
     for (var segment in widget.segments) {
-      final text = _getDecodedText(segment.text).toLowerCase();
-      final matches = RegExp(RegExp.escape(searchQuery), caseSensitive: false).allMatches(text);
-      for (final _ in matches) {
-        _matchKeys.add(GlobalKey());
-      }
+      _segmentMatchOffsets.add(currentTotal);
+      final segmentText = _getDecodedText(segment.text).toLowerCase();
+      final matches = RegExp(RegExp.escape(lowerQuery), caseSensitive: false).allMatches(segmentText);
+      currentTotal += matches.length;
     }
   }
 
@@ -193,20 +201,29 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
   void didUpdateWidget(TranscriptWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
 
+    bool shouldRecalculate = false;
+
     // Reinitialize keys if segment count changed
     if (widget.segments.length != oldWidget.segments.length) {
       _initializeSegmentKeys();
+      shouldRecalculate = true;
+    } else if (widget.segments != oldWidget.segments) {
+      shouldRecalculate = true;
     }
 
     if (widget.searchQuery != oldWidget.searchQuery) {
-      _rebuildMatchKeys();
       _previousSearchResultIndex = -1;
+      shouldRecalculate = true;
 
       if (widget.searchQuery.isNotEmpty && widget.currentResultIndex >= 0) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _scrollToSearchResult();
         });
       }
+    }
+
+    if (shouldRecalculate) {
+      _calculateMatchOffsets();
     }
 
     // Check if new segments were added
@@ -292,48 +309,10 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
   }
 
   void _scrollToSearchResult() {
-    if (!_scrollController.hasClients) {
+    if (!_scrollController.hasClients || widget.searchQuery.isEmpty) {
       return;
     }
 
-    if (widget.searchQuery.isEmpty) {
-      return;
-    }
-
-    if (widget.currentResultIndex < 0 || widget.currentResultIndex >= _matchKeys.length) {
-      return;
-    }
-
-    final matchKey = _matchKeys[widget.currentResultIndex];
-    final context = matchKey.currentContext;
-
-    if (context != null) {
-      _scrollToContext(context);
-    } else {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final retryContext = matchKey.currentContext;
-        if (retryContext != null) {
-          _scrollToContext(retryContext);
-        } else {
-          _scrollToSearchResultFallback();
-        }
-      });
-    }
-  }
-
-  void _scrollToContext(BuildContext context) {
-    _isAutoScrolling = true;
-    Scrollable.ensureVisible(
-      context,
-      duration: const Duration(milliseconds: 400),
-      curve: Curves.easeInOutCubic,
-      alignment: 0.35,
-    ).then((_) {
-      _isAutoScrolling = false;
-    });
-  }
-
-  void _scrollToSearchResultFallback() {
     final searchQuery = widget.searchQuery.toLowerCase();
     int currentMatchIndex = 0;
     int targetSegmentIndex = -1;
@@ -351,28 +330,52 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
 
     if (targetSegmentIndex >= 0 && targetSegmentIndex < _segmentKeys.length) {
       final segmentKey = _segmentKeys[targetSegmentIndex];
-
       final segmentContext = segmentKey.currentContext;
+
       if (segmentContext != null) {
         _scrollToContext(segmentContext);
         return;
       }
 
-      final itemHeight = 80.0;
-      final headerHeight = widget.topMargin ? 32.0 : 0.0;
-      final targetOffset = headerHeight + (targetSegmentIndex * itemHeight);
-
       _isAutoScrolling = true;
-      _scrollController
-          .animateTo(
-        targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
-        duration: const Duration(milliseconds: 400),
-        curve: Curves.easeInOutCubic,
-      )
-          .then((_) {
-        _isAutoScrolling = false;
+
+      final double estimatedItemHeight = 120.0;
+      final double headerHeight = widget.topMargin ? 32.0 : 0.0;
+      
+      double targetOffset = headerHeight + (targetSegmentIndex * estimatedItemHeight);
+      
+      if (_scrollController.position.maxScrollExtent > estimatedItemHeight * widget.segments.length) {
+          final double progress = targetSegmentIndex / widget.segments.length;
+          targetOffset = progress * _scrollController.position.maxScrollExtent;
+      }
+      
+      final double maxExtent = _scrollController.position.maxScrollExtent;
+      targetOffset = targetOffset.clamp(0.0, maxExtent);
+
+      _scrollController.animateTo(
+        targetOffset,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeOut,
+      ).then((_) {
+        if (segmentKey.currentContext != null) {
+          _scrollToContext(segmentKey.currentContext!);
+        } else {
+          _isAutoScrolling = false;
+        }
       });
     }
+  }
+
+  void _scrollToContext(BuildContext context) {
+    _isAutoScrolling = true;
+    Scrollable.ensureVisible(
+      context,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeInOutCubic,
+      alignment: 0.35,
+    ).then((_) {
+      _isAutoScrolling = false;
+    });
   }
 
   String _getDecodedText(String text) {
@@ -397,10 +400,14 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
     final lowerQuery = searchQuery.toLowerCase();
 
     int globalMatchIndex = 0;
-    for (int i = 0; i < segmentIndex; i++) {
-      final segmentText = _getDecodedText(widget.segments[i].text).toLowerCase();
-      final matches = RegExp(RegExp.escape(lowerQuery), caseSensitive: false).allMatches(segmentText);
-      globalMatchIndex += matches.length;
+    if (segmentIndex < _segmentMatchOffsets.length) {
+      globalMatchIndex = _segmentMatchOffsets[segmentIndex];
+    } else {
+      for (int i = 0; i < segmentIndex && i < widget.segments.length; i++) {
+        final segmentText = _getDecodedText(widget.segments[i].text).toLowerCase();
+        final matches = RegExp(RegExp.escape(lowerQuery), caseSensitive: false).allMatches(segmentText);
+        globalMatchIndex += matches.length;
+      }
     }
 
     int start = 0;
@@ -417,23 +424,14 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
       final currentGlobalIndex = globalMatchIndex;
       final isCurrentResult = currentGlobalIndex == widget.currentResultIndex;
 
-      final matchKey = currentGlobalIndex < _matchKeys.length ? _matchKeys[currentGlobalIndex] : null;
-
-      spans.add(WidgetSpan(
-        child: Container(
-          key: matchKey,
-          decoration: BoxDecoration(
-            color: isCurrentResult ? Colors.orange.withValues(alpha: 0.9) : Colors.deepPurple.withValues(alpha: 0.6),
-            borderRadius: BorderRadius.circular(2),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 1),
-          child: Text(
-            text.substring(matchStart, matchEnd),
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+      spans.add(TextSpan(
+        text: text.substring(matchStart, matchEnd),
+        style: TextStyle(
+          backgroundColor: isCurrentResult
+              ? Colors.orange.withValues(alpha: 0.9)
+              : Colors.deepPurple.withValues(alpha: 0.6),
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
         ),
       ));
 
@@ -648,7 +646,11 @@ class _TranscriptWidgetState extends State<TranscriptWidget> {
                               behavior: HitTestBehavior.opaque,
                               onDoubleTap: () {
                                 if (widget.searchQuery.isNotEmpty) return;
-                                _enterEdit(data.id);
+                                if (_isEditing(data.id)) {
+                                  _exitEdit();
+                                } else {
+                                  _enterEdit(data.id);
+                                }
                               },
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,

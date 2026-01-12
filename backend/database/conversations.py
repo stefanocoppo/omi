@@ -404,13 +404,6 @@ def update_conversation_title(uid: str, conversation_id: str, title: str):
 
 
 def update_conversation_overview(uid: str, conversation_id: str, overview: str):
-    user_ref = db.collection('users').document(uid)
-    conversation_ref = user_ref.collection(conversations_collection).document(conversation_id)
-
-    doc_snapshot = conversation_ref.get()
-    if not doc_snapshot.exists:
-        return
-
     update_data = {'structured.overview': overview}
     update_conversation(uid, conversation_id, update_data)
 

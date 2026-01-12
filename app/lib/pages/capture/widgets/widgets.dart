@@ -192,6 +192,7 @@ getTranscriptWidget(
   Map<String, TextEditingController>? segmentControllers,
   Map<String, FocusNode>? segmentFocusNodes,
   Function(int)? onMatchCountChanged,
+  Function(String)? onSegmentEdit,
 }) {
   if (conversationCreating) {
     return const Padding(
@@ -227,6 +228,7 @@ getTranscriptWidget(
       segmentControllers: segmentControllers,
       segmentFocusNodes: segmentFocusNodes,
       onMatchCountChanged: onMatchCountChanged,
+      onSegmentEdit: onSegmentEdit,
     );
   }
 

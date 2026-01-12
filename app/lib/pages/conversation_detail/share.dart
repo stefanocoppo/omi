@@ -22,11 +22,7 @@ void _copyTranscript(BuildContext context, ServerConversation conversation) {
 
 void _copySummary(BuildContext context, ServerConversation conversation) {
   // Use user edited overview if available
-  final summary = conversation.structured.overview.trim().isNotEmpty
-      ? conversation.structured.overview.trim()
-      : (conversation.appResults.isNotEmpty && conversation.appResults[0].content.trim().isNotEmpty
-          ? conversation.appResults[0].content.trim()
-          : conversation.structured.toString());
+  final summary = conversation.getSummary();
   Clipboard.setData(ClipboardData(text: summary));
   HapticFeedback.lightImpact();
 

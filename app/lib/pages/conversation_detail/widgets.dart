@@ -486,7 +486,7 @@ class _EditableMarkdownFieldState extends State<_EditableMarkdownField> {
 
   void _handleDoubleTap() {
     if (widget.controller == null) return;
-    
+
     // Toggle edit mode via provider
     context.read<ConversationDetailProvider>().toggleSummaryEdit();
   }
@@ -515,131 +515,16 @@ class _EditableMarkdownFieldState extends State<_EditableMarkdownField> {
       onDoubleTap: _handleDoubleTap,
       child: ConversationMarkdownWidget(
         content: markdownContent,
+        searchQuery: widget.searchQuery,
+        currentResultIndex: widget.currentResultIndex,
       ),
     );
   }
 }
 
 class _GetEditTextFieldState extends State<GetEditTextField> {
-  List<GlobalKey> _matchKeys = [];
-  int _previousResultIndex = -1;
-
-  @override
-  void didUpdateWidget(GetEditTextField oldWidget) {
-    super.didUpdateWidget(oldWidget);
-
-    // Scroll to current result when it changes
-    if (widget.currentResultIndex != _previousResultIndex &&
-        widget.currentResultIndex >= 0 &&
-        widget.searchQuery.isNotEmpty) {
-      _previousResultIndex = widget.currentResultIndex;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollToCurrentMatch();
-      });
-    }
-  }
-
-  void _scrollToCurrentMatch() {
-    if (widget.currentResultIndex < 0 || widget.currentResultIndex >= _matchKeys.length) {
-      return;
-    }
-
-    final matchKey = _matchKeys[widget.currentResultIndex];
-    final context = matchKey.currentContext;
-
-    if (context != null) {
-      Scrollable.ensureVisible(
-        context,
-        duration: const Duration(milliseconds: 400),
-        curve: Curves.easeInOutCubic,
-        alignment: 0.35,
-      );
-    }
-  }
-
-  List<InlineSpan> _buildHighlightedText(String text, String searchQuery, int currentResultIndex) {
-    if (searchQuery.isEmpty) {
-      _matchKeys.clear();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        widget.onMatchCountChanged?.call(0);
-      });
-      return [TextSpan(text: text, style: widget.style)];
-    }
-
-    final spans = <InlineSpan>[];
-    final lowerText = text.toLowerCase();
-    final lowerQuery = searchQuery.toLowerCase();
-
-    int start = 0;
-    int matchIndex = 0;
-    final matches = RegExp(RegExp.escape(lowerQuery), caseSensitive: false).allMatches(lowerText);
-
-    _matchKeys = List.generate(matches.length, (index) => GlobalKey());
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.onMatchCountChanged?.call(matches.length);
-    });
-
-    for (final match in matches) {
-      final matchStart = match.start;
-      final matchEnd = match.end;
-
-      if (matchStart > start) {
-        spans.add(TextSpan(text: text.substring(start, matchStart), style: widget.style));
-      }
-
-      // Add highlighted match with GlobalKey for scrolling
-      final isCurrentResult = matchIndex == currentResultIndex;
-      final matchKey = matchIndex < _matchKeys.length ? _matchKeys[matchIndex] : null;
-
-      spans.add(WidgetSpan(
-        child: Container(
-          key: matchKey,
-          decoration: BoxDecoration(
-            color: isCurrentResult ? Colors.orange.withValues(alpha: 0.9) : Colors.deepPurple.withValues(alpha: 0.6),
-            borderRadius: BorderRadius.circular(2),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 1),
-          child: Text(
-            text.substring(matchStart, matchEnd),
-            style: widget.style.copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              backgroundColor: Colors.transparent,
-            ),
-          ),
-        ),
-      ));
-
-      start = matchEnd;
-      matchIndex++;
-    }
-
-    if (start < text.length) {
-      spans.add(TextSpan(text: text.substring(start), style: widget.style));
-    }
-
-    return spans;
-  }
-
   @override
   Widget build(BuildContext context) {
-    // Check if editing via provider
-    final isEditing = context.select<ConversationDetailProvider, bool>((p) => p.isEditingSummary);
-    final bool isActivelyEditing = isEditing || (widget.focusNode?.hasFocus ?? false);
-
-    if (widget.searchQuery.isNotEmpty && !isActivelyEditing) {
-      return RichText(
-        text: TextSpan(
-          children: _buildHighlightedText(
-            widget.controller?.text ?? widget.content,
-            widget.searchQuery,
-            widget.currentResultIndex,
-          ),
-        ),
-      );
-    }
-
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onDoubleTap: () {

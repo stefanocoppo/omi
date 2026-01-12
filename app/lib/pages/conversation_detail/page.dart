@@ -112,14 +112,19 @@ class _ConversationDetailPageState extends State<ConversationDetailPage> with Ti
         }
       }
     } else if (selectedTab == ConversationTab.summary) {
-      final overview = provider.conversation.structured.overview.trim();
-      if (overview.isNotEmpty) {
-        final text = overview.decodeString.toLowerCase();
-        final query = _searchQuery.toLowerCase();
-        int index = 0;
-        while ((index = text.indexOf(query, index)) != -1) {
-          count++;
-          index += query.length;
+      if (!provider.conversation.discarded) {
+        final appResponse = provider.getSummarizedApp();
+        if (appResponse != null) {
+          final content = appResponse.content.trim();
+          if (content.isNotEmpty) {
+            final text = content.decodeString.toLowerCase();
+            final query = _searchQuery.toLowerCase();
+            int index = 0;
+            while ((index = text.indexOf(query, index)) != -1) {
+              count++;
+              index += query.length;
+            }
+          }
         }
       }
     }
@@ -796,8 +801,9 @@ class _ConversationDetailPageState extends State<ConversationDetailPage> with Ti
                             physics: const NeverScrollableScrollPhysics(),
                             children: [
                               TranscriptWidgets(
-                                searchQuery: _searchQuery,
-                                currentResultIndex: getCurrentResultIndexForHighlighting(),
+                                searchQuery: selectedTab == ConversationTab.transcript ? _searchQuery : '',
+                                currentResultIndex:
+                                    selectedTab == ConversationTab.transcript ? getCurrentResultIndexForHighlighting() : -1,
                                 onTapWhenSearchEmpty: () {
                                   if (_isSearching && _searchQuery.isEmpty) {
                                     _closeSearch();
@@ -805,7 +811,7 @@ class _ConversationDetailPageState extends State<ConversationDetailPage> with Ti
                                 },
                                 onMatchCountChanged: (count) {
                                   WidgetsBinding.instance.addPostFrameCallback((_) {
-                                    if (mounted) {
+                                    if (mounted && selectedTab == ConversationTab.transcript) {
                                       setState(() {
                                         _totalSearchResults = count;
                                         if (count > 0 && _currentSearchIndex == 0) {
@@ -819,8 +825,9 @@ class _ConversationDetailPageState extends State<ConversationDetailPage> with Ti
                                 },
                               ),
                               SummaryTab(
-                                searchQuery: _searchQuery,
-                                currentResultIndex: getCurrentResultIndexForHighlighting(),
+                                searchQuery: selectedTab == ConversationTab.summary ? _searchQuery : '',
+                                currentResultIndex:
+                                    selectedTab == ConversationTab.summary ? getCurrentResultIndexForHighlighting() : -1,
                                 onTapWhenSearchEmpty: () {
                                   if (_isSearching && _searchQuery.isEmpty) {
                                     setState(() {
@@ -832,7 +839,7 @@ class _ConversationDetailPageState extends State<ConversationDetailPage> with Ti
                                 },
                                 onMatchCountChanged: (count) {
                                   WidgetsBinding.instance.addPostFrameCallback((_) {
-                                    if (mounted) {
+                                    if (mounted && selectedTab == ConversationTab.summary) {
                                       setState(() {
                                         _totalSearchResults = count;
                                         if (count > 0 && _currentSearchIndex == 0) {
@@ -1305,6 +1312,9 @@ class _TranscriptWidgetsState extends State<TranscriptWidgets> with AutomaticKee
                 segmentControllers: provider.segmentControllers,
                 segmentFocusNodes: provider.segmentFocusNodes,
                 onMatchCountChanged: widget.onMatchCountChanged,
+                onSegmentEdit: (segmentId) {
+                  provider.enterSegmentEdit(segmentId);
+                },
                 editSegment: (segmentId, speakerId) {
                   final connectivityProvider = Provider.of<ConnectivityProvider>(context, listen: false);
                   if (!connectivityProvider.isConnected) {

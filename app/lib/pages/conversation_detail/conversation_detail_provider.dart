@@ -123,6 +123,48 @@ class ConversationDetailProvider extends ChangeNotifier with MessageNotifierMixi
   String? editingSegmentId;
 
   void enterSegmentEdit(String segmentId) {
+    if (segmentControllers.containsKey(segmentId)) {
+      editingSegmentId = segmentId;
+      notifyListeners();
+      return;
+    }
+
+    final segmentIndex = conversation.transcriptSegments.indexWhere((s) => s.id == segmentId);
+
+    if (segmentIndex == -1) {
+      debugPrint('Segment not found for edit: $segmentId');
+      return;
+    }
+
+    final segment = conversation.transcriptSegments[segmentIndex];
+    final controller = TextEditingController(text: segment.text);
+    final focusNode = FocusNode();
+
+    segmentControllers[segmentId] = controller;
+    segmentFocusNodes[segmentId] = focusNode;
+
+    focusNode.addListener(() async {
+      if (!focusNode.hasFocus) {
+        final updatedText = controller.text;
+        if (segment.text != updatedText) {
+          final oldText = segment.text;
+          segment.text = updatedText;
+
+          final success = await updateSegmentText(
+            conversation.id,
+            segment.id,
+            updatedText,
+          );
+
+          if (!success) {
+            segment.text = oldText;
+            controller.text = oldText;
+            notifyListeners();
+          }
+        }
+      }
+    });
+
     editingSegmentId = segmentId;
     notifyListeners();
   }
@@ -276,15 +318,25 @@ class ConversationDetailProvider extends ChangeNotifier with MessageNotifierMixi
 
     showUnassignedFloatingButton = true;
 
-    final originalTitle = conversation.structured.title;
-    titleController!.text = originalTitle;
-    titleFocusNode!.addListener(() {
+    var lastSavedTitle = conversation.structured.title;
+    titleController!.text = lastSavedTitle;
+    titleFocusNode!.addListener(() async {
       debugPrint('titleFocusNode focus changed');
       if (!titleFocusNode!.hasFocus) {
         final newTitle = titleController!.text;
-        if (originalTitle != newTitle) {
+        if (lastSavedTitle != newTitle) {
+          final oldTitle = lastSavedTitle;
           conversation.structured.title = newTitle;
-          updateConversationTitle(conversation.id, newTitle);
+          lastSavedTitle = newTitle;
+          notifyListeners(); // Update UI immediately if needed
+
+          final success = await updateConversationTitle(conversation.id, newTitle);
+          if (!success) {
+             conversation.structured.title = oldTitle;
+             lastSavedTitle = oldTitle;
+             titleController!.text = oldTitle;
+             notifyListeners();
+          }
         }
       }
     });
@@ -295,7 +347,7 @@ class ConversationDetailProvider extends ChangeNotifier with MessageNotifierMixi
 
       String lastSavedOverview = summarizedApp.content;
 
-      overviewFocusNode!.addListener(() {
+      overviewFocusNode!.addListener(() async {
         if (!overviewFocusNode!.hasFocus) {
           if (isEditingSummary) {
             exitSummaryEdit();
@@ -303,6 +355,7 @@ class ConversationDetailProvider extends ChangeNotifier with MessageNotifierMixi
 
           final newOverview = overviewController!.text;
           if (lastSavedOverview != newOverview) {
+            final oldOverview = lastSavedOverview;
             // Update both the structured overview and the app result content
             conversation.structured.overview = newOverview;
             if (conversation.appResults.isNotEmpty) {
@@ -312,27 +365,23 @@ class ConversationDetailProvider extends ChangeNotifier with MessageNotifierMixi
                 id: conversation.appResults[0].id,
               );
             }
-            updateConversationOverview(conversation.id, newOverview);
             lastSavedOverview = newOverview;
             notifyListeners();
-          }
-        }
-      });
-    }
-
-    for (var segment in conversation.transcriptSegments) {
-      final controller = TextEditingController(text: segment.text);
-      final focusNode = FocusNode();
-
-      segmentControllers[segment.id] = controller;
-      segmentFocusNodes[segment.id] = focusNode;
-
-      focusNode.addListener(() {
-        if (!focusNode.hasFocus) {
-          final updatedText = controller.text;
-          if (segment.text != updatedText) {
-            segment.text = updatedText;
-            updateSegmentText(conversation.id, segment.id, updatedText);
+            
+            final success = await updateConversationOverview(conversation.id, newOverview);
+            if (!success) {
+               conversation.structured.overview = oldOverview;
+               lastSavedOverview = oldOverview;
+               overviewController!.text = oldOverview;
+               if (conversation.appResults.isNotEmpty) {
+                  conversation.appResults[0] = AppResponse(
+                    oldOverview,
+                    appId: conversation.appResults[0].appId,
+                    id: conversation.appResults[0].id,
+                  );
+               }
+               notifyListeners();
+            }
           }
         }
       });
@@ -431,15 +480,26 @@ class ConversationDetailProvider extends ChangeNotifier with MessageNotifierMixi
   /// Returns the first app result from the conversation if available
   /// This is typically the summary of the conversation
   AppResponse? getSummarizedApp() {
-    if (conversation.appResults.isNotEmpty) {
-      return conversation.appResults[0];
-    }
-    // If no appResults but we have overview, create synthetic response
-    if (conversation.structured.overview.isNotEmpty) {
+    // If we have a structured overview (which might be user-edited), prefer it
+    if (conversation.structured.overview.trim().isNotEmpty) {
+      String? appId;
+      int id = 0;
+
+      // Attempt to preserve appId from existing appResults if available
+      if (conversation.appResults.isNotEmpty) {
+        appId = conversation.appResults[0].appId;
+        id = conversation.appResults[0].id;
+      }
+
       return AppResponse(
         conversation.structured.overview,
-        appId: null,
+        appId: appId,
+        id: id,
       );
+    }
+
+    if (conversation.appResults.isNotEmpty) {
+      return conversation.appResults[0];
     }
     return null;
   }
