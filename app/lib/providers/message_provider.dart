@@ -363,9 +363,11 @@ class MessageProvider extends ChangeNotifier {
     return messages;
   }
 
-  Future setMessageNps(ServerMessage message, int value) async {
-    await setMessageResponseRating(message.id, value);
+  Future setMessageNps(ServerMessage message, int value, {String? reason}) async {
+    await setMessageResponseRating(message.id, value, reason: reason);
     message.askForNps = false;
+    // Update local message rating so it persists when scrolling
+    message.rating = value == 0 ? null : value;
     notifyListeners();
   }
 
@@ -435,13 +437,15 @@ class MessageProvider extends ChangeNotifier {
     setShowTypingIndicator(true);
     var message = ServerMessage.empty();
     messages.add(message);
-    final aiIndex = messages.length - 1;
+    var aiIndex = messages.length - 1;
     notifyListeners();
 
     try {
       bool firstChunkRecieved = false;
       await for (var chunk in sendVoiceMessageStreamServer([file])) {
-        if (!firstChunkRecieved && [MessageChunkType.data, MessageChunkType.done].contains(chunk.type)) {
+        if (!firstChunkRecieved &&
+            [MessageChunkType.message, MessageChunkType.data, MessageChunkType.done, MessageChunkType.think]
+                .contains(chunk.type)) {
           firstChunkRecieved = true;
           if (onFirstChunkRecived != null) {
             onFirstChunkRecived();
@@ -468,7 +472,8 @@ class MessageProvider extends ChangeNotifier {
         }
 
         if (chunk.type == MessageChunkType.message) {
-          messages.insert(1, chunk.message!);
+          messages.insert(aiIndex, chunk.message!);
+          aiIndex++;
           notifyListeners();
           continue;
         }
